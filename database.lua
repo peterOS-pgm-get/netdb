@@ -128,13 +128,13 @@ function netdb.setup()
 end
 
 ---Open a connection to a networked NetDB server
----@param server string|integer Server hostname or IP adress, set to 'localhost' for local db
+---@param server string|integer Server hostname or IP address, set to 'localhost' for local db
 ---@param db string Database name
 ---@param port integer|nil OPTIONAL connection port (default 10031)
 ---@return DBConnector|nil con Connection object OR <code>nil</code> on connection failure
 function netdb.open(server, db, port)
     netdb.setup()
-    log:info('Oppening connection to Database')
+    log:info('Opening connection to Database')
     if not netdb.isSetup then
         if not netdb.setup() then
             log:error('Could not connect to Database, NetDB could not be setup')
@@ -396,7 +396,7 @@ local defaultIndex = {
 }
 
 ---Starts the NetDB server
----@return boolean started if the startup was successfull
+---@return boolean started if the startup was successful
 function netdb.server.start()
     if server.handler then
         return true
@@ -475,7 +475,7 @@ end
 
 ---Load a database by name
 ---@param database string database name
----@return table|nil db The database OR nill on failure
+---@return table|nil db The database OR nil on failure
 function netdb.server.loadDb(database)
     netdb.setup()
     if not server.index.dbs[database] then
@@ -564,9 +564,9 @@ end
 ---Get data from the database
 ---@param database string Database name
 ---@param tableName string Table name
----@param sCols table|nil List of selector columns
----@param sVals table|nil List of selector values
----@param cols table|nil List of columns to get
+---@param sCols string[]|nil List of selector columns
+---@param sVals any[]|nil List of selector values
+---@param cols string[]|nil List of columns to get
 ---@return boolean success
 ---@return table|string rsp List of rows matching selector OR error description
 function netdb.server.get(database, tableName, sCols, sVals, cols)
@@ -609,10 +609,10 @@ end
 ---Put data into the database
 ---@param database string Database name
 ---@param tableName string Table name
----@param sCols table List of selector columns
----@param sVals table List of selector values
----@param dCols table List of data columns to set
----@param dVals table List of values to set columns to
+---@param sCols string[] List of selector columns
+---@param sVals any[] List of selector values
+---@param dCols string[] List of data columns to set
+---@param dVals any[] List of values to set columns to
 ---@return boolean success
 ---@return boolean|string rsp True OR error description
 function netdb.server.put(database, tableName, sCols, sVals, dCols, dVals)
@@ -666,8 +666,8 @@ end
 ---Insert a new row into the table
 ---@param database string Database name
 ---@param tableName string Table name
----@param cols table List of columns to set for the new row
----@param vals table List of data from columns
+---@param cols string[] List of columns to set for the new row
+---@param vals any[] List of data from columns
 ---@return boolean success
 ---@return boolean|string rsp True OR error description
 function netdb.server.insert(database, tableName, cols, vals)
@@ -730,8 +730,8 @@ end
 ---Check if a row matching selector exists
 ---@param database string Database name
 ---@param tableName string Table name
----@param cols table List of selector columns
----@param vals table List of selector values
+---@param cols string[] List of selector columns
+---@param vals any[] List of selector values
 ---@return boolean success
 ---@return boolean|string rsp If a row existed OR error description
 function netdb.server.exists(database, tableName, cols, vals)
@@ -806,7 +806,7 @@ end
 
 ---List all databases
 ---@return boolean success
----@return table dbs List of databasses
+---@return string[] dbs List of databases
 function netdb.server.listDbs()
     netdb.setup()
     local list = {}
@@ -819,7 +819,7 @@ end
 ---List tables in database
 ---@param database string Database name
 ---@return boolean success
----@return table|string rsp List of tables OR error string
+---@return string[]|string rsp List of tables OR error string
 function netdb.server.listTables(database)
     netdb.setup()
     local db = netdb.server.loadDb(database)
@@ -884,9 +884,9 @@ end
 
 ---Returns if a database exists with name
 ---@param database string Database name
----@return unknown exists If the database exists
+---@return boolean exists If the database exists
 function netdb.server.hasDb(database)
-    return server.index.dbs[database]
+    return server.index.dbs[database] ~= nil
 end
 
 function netdb.server.getArgs(cmd)
@@ -1078,6 +1078,11 @@ local function fixArr(arr)
     return arr
 end
 
+---Run SQL style commands(s)
+---@param database string Database name
+---@param cmd string SQL style command (can contain `;` for separating commands)
+---@return boolean success
+---@return any[]|any|string result List of results from every command (not enclosed if single command) OR first error message
 function netdb.server.run(database, cmd)
     local cmds = netdb.server.getArgs(cmd)
     if (#cmds == 1) then
@@ -1345,14 +1350,21 @@ function netdb.printTbl(tbl)
     return str .. ' }'
 end
 
+---Get all users in database
+---@return table|string rsp List of users OR error message
 function netdb.server.getUsers()
     local s, r = netdb.server.run(netdb.config.server.serverdb, 'SELECT name, access, perms, origin FROM users')
     if not s then
-        return 'ERORR: ' .. r
+        return 'ERROR: ' .. r
     end
     return r
 end
 
+---Add a user to the database
+---@param name string New username
+---@param password string Password for new user
+---@return boolean success
+---@return string rsp `'User added'` OR error message
 function netdb.server.addUser(name, password)
     local s, r = netdb.server.run(netdb.config.server.serverdb, 'SELECT name FROM users WHERE name="' .. name .. '"')
     if not s then
@@ -1370,6 +1382,11 @@ function netdb.server.addUser(name, password)
     return true, 'User added'
 end
 
+---Set the password of a user
+---@param name string User name
+---@param password string New password
+---@return boolean success
+---@return string rsp `'Password changed'` OR error message
 function netdb.server.setUserPassword(name, password)
     local s, r = netdb.server.run(netdb.config.server.serverdb, 'SELECT name FROM users WHERE name="' .. name .. '"')
     if not s then
@@ -1386,6 +1403,11 @@ function netdb.server.setUserPassword(name, password)
     return true, 'Password changed'
 end
 
+---Set the permissions of a user
+---@param name string User name
+---@param perms string New permissions
+---@return boolean success
+---@return string rsp `'Perms changed'` OR error message
 function netdb.server.setUserPerms(name, perms)
     local s, r = netdb.server.run(netdb.config.server.serverdb, 'SELECT name FROM users WHERE name="' .. name .. '"')
     if not s then
@@ -1402,6 +1424,11 @@ function netdb.server.setUserPerms(name, perms)
     return true, 'Perms changed'
 end
 
+---Set the database access of a user
+---@param name string User name
+---@param access string New database access
+---@return boolean success
+---@return string rsp `'Access changed'` OR error message
 function netdb.server.setUserAccess(name, access)
     local s, r = netdb.server.run(netdb.config.server.serverdb, 'SELECT name FROM users WHERE name="' .. name .. '"')
     if not s then
@@ -1418,6 +1445,11 @@ function netdb.server.setUserAccess(name, access)
     return true, 'Access changed'
 end
 
+---Set the origin policy of a user
+---@param name string User name
+---@param origin string New origin policy
+---@return boolean success
+---@return string `'Origin changed'` OR error message
 function netdb.server.setUserOrigin(name, origin)
     local s, r = netdb.server.run(netdb.config.server.serverdb, 'SELECT name FROM users WHERE name="' .. name .. '"')
     if not s then
