@@ -45,8 +45,86 @@ _G.netdb = {
     server = {}
 }
 
+---@class DBUser
+---@field name string User name
+---@field password string Password hash (SHA256)
+---@field access {string: boolean} Databases the user can access
+---@field origin {string: boolean} Where the user can connect from
+---@field perms {string: boolean} Method permissions
+local DBUser = {}
+local DefaultDBUser = {
+    name = "",
+    password = "",
+    access = {["*"]=true},
+    origin = {["*"]=true},
+    perms = {["*"]=true}
+}
+setmetatable(DefaultDBUser, {__index = DBUser})
+
+---Converts database return to DBUser
+---@param user table
+---@return DBUser user
+function DBUser.parse(user)
+    local userOut = {}
+    setmetatable(user, { __index = DBUser })
+    if user.access ~= '*' and type(user.access) == 'string' then
+        local t = string.split(user.access, ',')
+        userOut.access = {}
+        for _, db in pairs(t) do
+            userOut.access[db] = true
+        end
+    elseif user.access == '*' then
+        userOut.access = {
+            ['*'] = true
+        }
+    end
+    if user.perms ~= '*' and type(user.perms) == 'string' then
+        local t = string.split(user.perms, ',')
+        userOut.perms = {}
+        for _, perm in pairs(t) do
+            userOut.perms[perm] = true
+        end
+    elseif user.perms == '*' then
+        userOut.perms = {
+            ['*'] = true
+        }
+    end
+    if user.origin ~= '*' and type(user.origin) == 'string' then
+        local t = string.split(user.origin, ',')
+        userOut.origin = {}
+        for _, origin in pairs(t) do
+            userOut.origin[origin] = true
+        end
+    elseif user.origin == '*' then
+        userOut.origin = {
+            ['*'] = true
+        }
+    end
+    return userOut
+end
+
+---Returns if the user can access the specified database
+---@param database string
+---@return boolean can
+function DBUser:canAccess(database)
+    return self.access['*'] or self.access[database]
+end
+
+---Checks if the specified origin is valid for the user (String IP or HW address)
+---@param origin string
+---@return boolean valid
+function DBUser:validOrigin(origin)
+    return self.origin['*'] or self.origin[origin]
+end
+
+---Checks if the user has the specified method permission
+---@param perm string
+---@return boolean has
+function DBUser:hasPerm(perm)
+    return self.perms['*'] or self.perms[perm]
+end
+
 local cfgPath = '/home/.appdata/netdb/netdb.cfg'
-local index = nil
 
 local log = Logger('/home/.pgmLog/netdb.log')
 
@@ -158,17 +236,6 @@ local server = {
     indexFile = netdb.config.server.root .. netdb.config.server.index
 }
 
-local function userHasPerm(user, perm)
-    -- print(textutils.serialise(user))
-    if user.perms == '*' then
-        return true
-    end
-    if user.perms[perm] then
-        return true
-    end
-    return false
-end
-
 local function updateDb(database, db)
     if not db then
         return
@@ -211,11 +278,7 @@ local function serverHandler(msg)
         return
     end
 
-    local user = {
-        access = '*',
-        perms = '*',
-        origin = '*'
-    }
+    local user = DefaultDBUser ---@type DBUser
     if netdb.config.server.userCtrl then
         if not msg.body.user then
             msg:reply(netdb.config.server.port,
@@ -229,7 +292,7 @@ local function serverHandler(msg)
             'SELECT * FROM users WHERE name="' .. msg.body.user.name .. '", password="' .. pHash .. '"')
         if not s or #r == 0 then
             if not s then
-                log:error('User Val: ' .. r)
+                log:error('User Val error: ' .. r)
             end
             msg:reply(netdb.config.server.port,
                 { type = 'netdb', method = 'return', suc = false },
@@ -237,38 +300,25 @@ local function serverHandler(msg)
             )
             return
         end
-        user = r[1]
-        if user.access ~= '*' and type(user.access) == 'string' then
-            local t = string.split(user.access --[[@as string]], ',')
-            user.access = {}
-            for _, db in pairs(t) do
-                user.access[db] = true
-            end
-        end
-        if user.perms ~= '*' and type(user.perms) == 'string' then
-            local t = string.split(user.perms --[[@as string]], ',')
-            user.perms = {}
-            for _, perm in pairs(t) do
-                user.perms[perm] = true
-            end
-        end
-        if user.origin ~= '*' and type(user.origin) == 'string' then
-            local t = string.split(user.origin --[[@as string]], ',')
-            user.origin = {}
-            for _, origin in pairs(t) do
-                user.origin[origin] = true
-            end
-        end
+        user = DBUser.parse(r[1])
     end
 
     local dbName = msg.header.db
-    if not (user.access == '*' or user.access[dbName]) then
+    if not user:canAccess(dbName) then
         msg:reply(netdb.config.server.port,
             { type = 'netdb', method = 'return', suc = false },
             { error = 'User can not access database' }
         )
         return
     end
+    if not user:validOrigin(net.ipFormat(msg.origin)) then
+        msg:reply(netdb.config.server.port,
+            { type = 'netdb', method = 'return', suc = false },
+            { error = 'Invalid origin for user' }
+        )
+        return
+    end
+
     if not server.index.dbs[dbName] then
         msg:reply(netdb.config.server.port,
             { type = 'netdb', method = 'return', suc = false },
@@ -279,7 +329,7 @@ local function serverHandler(msg)
 
     log:debug('Msg')
     if method == 'get' then
-        if not userHasPerm(user, 'select') then
+        if not user:hasPerm('select') then
             msg:reply(netdb.config.server.port,
                 { type = 'netdb', method = 'return', suc = false },
                 { error = 'Invalid permissions: SELECT' }
@@ -299,7 +349,7 @@ local function serverHandler(msg)
         end
         return
     elseif method == 'put' then
-        if not userHasPerm(user, 'update') then
+        if not user:hasPerm('update') then
             msg:reply(netdb.config.server.port,
                 { type = 'netdb', method = 'return', suc = false },
                 { error = 'Invalid permissions: UPDATE' }
@@ -320,7 +370,7 @@ local function serverHandler(msg)
         end
         return
     elseif method == 'insert' then
-        if not userHasPerm(user, 'insert') then
+        if not user:hasPerm('insert') then
             msg:reply(netdb.config.server.port,
                 { type = 'netdb', method = 'return', suc = false },
                 { error = 'Invalid permissions: INSERT' }
@@ -340,7 +390,7 @@ local function serverHandler(msg)
         end
         return
     elseif method == 'exists' then
-        if not userHasPerm(user, 'exists') then
+        if not user:hasPerm('exists') then
             msg:reply(netdb.config.server.port,
                 { type = 'netdb', method = 'return', suc = false },
                 { error = 'Invalid permissions: EXISTS' }
@@ -361,7 +411,7 @@ local function serverHandler(msg)
         return
     elseif method == 'run' then
         local m = string.lower(string.split(msg.body.cmd, ' ')[1])
-        if not userHasPerm(user, m) then
+        if not user:hasPerm(m) then
             msg:reply(netdb.config.server.port,
                 { type = 'netdb', method = 'return', suc = false },
                 { error = 'Invalid permissions: ' .. string.upper(m) }
@@ -614,7 +664,7 @@ end
 ---@param dCols string[] List of data columns to set
 ---@param dVals any[] List of values to set columns to
 ---@return boolean success
----@return boolean|string rsp True OR error description
+---@return string rsp `'<#> rows updated'` OR error description
 function netdb.server.put(database, tableName, sCols, sVals, dCols, dVals)
     netdb.setup()
     local db = netdb.server.loadDb(database)
@@ -669,7 +719,7 @@ end
 ---@param cols string[] List of columns to set for the new row
 ---@param vals any[] List of data from columns
 ---@return boolean success
----@return boolean|string rsp True OR error description
+---@return string rsp `'Row inserted'` OR error description
 function netdb.server.insert(database, tableName, cols, vals)
     netdb.setup()
     local db = netdb.server.loadDb(database)
@@ -772,7 +822,7 @@ end
 ---@param sCols table List of selector columns
 ---@param sVals table List of selector values
 ---@return boolean success
----@return boolean|string rsp True OR error description
+---@return string rsp `'<#> rows deleted'` OR error description
 function netdb.server.delete(database, tableName, sCols, sVals)
     netdb.setup()
     local db = netdb.server.loadDb(database)
@@ -788,20 +838,20 @@ function netdb.server.delete(database, tableName, sCols, sVals)
     if not valid then
         return false, err
     end
-    local rcount = 0
+    local rCount = 0
     for i, row in pairs(tbl) do
         if rowMatch(row, sCols, sVals) then
             -- for i, col in pairs(dCols) do
             --     row[col] = dVals[i]
             -- end
             tbl[i] = nil
-            rcount = rcount + 1
+            rCount = rCount + 1
         end
     end
     if not netdb.server.saveDb(database, db) then
         return false, 'Could not save Database'
     end
-    return true, rcount .. ' rows deleted'
+    return true, rCount .. ' rows deleted'
 end
 
 ---List all databases
@@ -891,32 +941,32 @@ end
 
 function netdb.server.getArgs(cmd)
     local parts = string.split(cmd, ' ')
-    local iq = false
+    local inQuotes = false
     local temp = ''
-    local args = {}
-    local cmds = {}
+    local arguments = {}
+    local commands = {}
     local c = false
     local lc = false
 
-    local kv = nil
+    local keyVal = nil
 
     local par = nil
     local pSet = {}
 
     local function insert(val)
-        if kv and iq then
-            kv.val = val
-            val = kv
-            kv = nil
+        if keyVal and inQuotes then
+            keyVal.val = val
+            val = keyVal
+            keyVal = nil
         end
         if par then
             table.insert(pSet, val)
             return
         end
         if c or lc then
-            table.insert(args[#args], val)
+            table.insert(arguments[#arguments], val)
         else
-            table.insert(args, val)
+            table.insert(arguments, val)
         end
         lc = c
     end
@@ -924,12 +974,12 @@ function netdb.server.getArgs(cmd)
     for i = 1, #parts do
         local p = parts[i]
         local endCmd = false
-        c = (not (iq or par)) and string.sub(p, -1) == ','
+        c = (not (inQuotes or par)) and string.sub(p, -1) == ','
         if c then
             p = string.sub(p, 1, -2)
-            if not lc then table.insert(args, {}) end
+            if not lc then table.insert(arguments, {}) end
         end
-        if iq then
+        if inQuotes then
             if (string.sub(p, -2) == '";') then
                 endCmd = true
                 p = string.sub(p, -1)
@@ -941,7 +991,7 @@ function netdb.server.getArgs(cmd)
             temp = temp .. ' ' .. p
             if string.sub(p, -1) == '"' then
                 insert(string.sub(temp, 2, -2))
-                iq = false
+                inQuotes = false
             end
         else
             if string.start(p, '"') then
@@ -952,7 +1002,7 @@ function netdb.server.getArgs(cmd)
                 if string.sub(p, -1) == '"' then
                     insert(string.sub(p, 2, -2))
                 else
-                    iq = true
+                    inQuotes = true
                     temp = p
                 end
             elseif string.len(p) > 1 and string.cont(p, '=') then
@@ -961,20 +1011,20 @@ function netdb.server.getArgs(cmd)
                     p = string.sub(p, -1)
                 end
                 local pts2 = string.split(p, '=')
-                kv = {
+                keyVal = {
                     key = pts2[1],
                     val = table.concat(pts2, '=', 2)
                 }
-                if string.sub(kv.val, -1) == '"' then
-                    kv.val = string.sub(kv.val, 2, -2)
-                    insert(kv)
-                elseif string.start(kv.val, '"') then
-                    iq = true
-                    temp = kv.val
+                if string.sub(keyVal.val, -1) == '"' then
+                    keyVal.val = string.sub(keyVal.val, 2, -2)
+                    insert(keyVal)
+                elseif string.start(keyVal.val, '"') then
+                    inQuotes = true
+                    temp = keyVal.val
                 else
                     ---@diagnostic disable-next-line: assign-type-mismatch
-                    kv.val = tonumber(kv.val) or kv.val
-                    insert(kv)
+                    keyVal.val = tonumber(keyVal.val) or keyVal.val
+                    insert(keyVal)
                 end
             elseif p == '(' then
                 par = {}
@@ -1013,14 +1063,14 @@ function netdb.server.getArgs(cmd)
             end
         end
         if endCmd then
-            table.insert(cmds, args)
-            args = {}
+            table.insert(commands, arguments)
+            arguments = {}
         end
     end
-    if args and #args > 0 then
-        table.insert(cmds, args)
+    if arguments and #arguments > 0 then
+        table.insert(commands, arguments)
     end
-    return cmds
+    return commands
 end
 
 ---Splits KV argument into separate lists
@@ -1084,14 +1134,14 @@ end
 ---@return boolean success
 ---@return any[]|any|string result List of results from every command (not enclosed if single command) OR first error message
 function netdb.server.run(database, cmd)
-    local cmds = netdb.server.getArgs(cmd)
-    if (#cmds == 1) then
-        return netdb.server.execute(database, cmds[1])
+    local commands = netdb.server.getArgs(cmd)
+    if (#commands == 1) then
+        return netdb.server.execute(database, commands[1])
     end
     local results = {}
-    for i = 0, #cmds do
-        if #cmds[i] > 0 then
-            local s, r = netdb.server.execute(database, cmds[i])
+    for i = 0, #commands do
+        if #commands[i] > 0 then
+            local s, r = netdb.server.execute(database, commands[i])
             if not s then
                 return false, r
             end
@@ -1272,7 +1322,7 @@ function netdb.server.execute(database, args)
             end
             db._schema[table][col] = nil
             netdb.server.saveDb(database, db)
-            return true, 'Column droped'
+            return true, 'Column dropped'
         elseif opt == 'modify' then
             local col = args[5]
             if not db._schema[table][col] then
@@ -1310,11 +1360,11 @@ function netdb.server.execute(database, args)
             end
             return true, db._schema[table]
         elseif args[2] == 'tables' then -- GET TABLES
-            local tbls = {}
+            local tables = {}
             for name, _ in pairs(db._schema) do
-                table.insert(tbls, name)
+                table.insert(tables, name)
             end
-            return true, tbls
+            return true, tables
         end
     elseif args[1] == 'delete' then -- DELETE FROM table WHERE condition
         local db = netdb.server.loadDb(database)
@@ -1465,9 +1515,3 @@ function netdb.server.setUserOrigin(name, origin)
     end
     return true, 'Origin changed'
 end
-
----@class DBUser
----@field name string User name
----@field access string|string[] Databases the user can access
----@field origin string Where the user can connect from
----@field password string Password hash (SHA256)
