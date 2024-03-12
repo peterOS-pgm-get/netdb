@@ -1,0 +1,11 @@
+{
+    "version": 0.6,
+    "files": [
+        "database.lua",
+        "cmd.lua",
+        "DBConnector.lua"
+    ],
+    "exec": "cmd.lua",
+    "cmpt": null,
+    "startup": "database.lua"
+}
