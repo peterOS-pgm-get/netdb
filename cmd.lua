@@ -21,7 +21,7 @@ end
 if args[1] == 'list' then
     if args[2] == 'tables' then
         if cmd.netdb.database == '' then
-            print('Slect a database first')
+            print('Select a database first')
             return
         end
         local r, tables = netdb.server.listTables(db)
@@ -48,7 +48,7 @@ elseif args[1] == 'create' then
         print(r)
     elseif args[2] == 'table' then
         if cmd.netdb.database == '' then
-            print('Slect a database first')
+            print('Select a database first')
             return
         end
         local s, r = netdb.server.createTable(cmd.netdb.database, args[3])
