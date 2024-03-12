@@ -640,27 +640,27 @@ function netdb.server.put(database, tableName, sCols, sVals, dCols, dVals)
             unique = true
             for _, row in pairs(tbl) do
                 if row[col] == dVals[i] then
-                    return false, 'Duplicte key for column `' .. col .. '`'
+                    return false, 'Duplicate key for column `' .. col .. '`'
                 end
             end
         end
     end
-    local rcount = 0
+    local rCount = 0
     for _, row in pairs(tbl) do
         if rowMatch(row, sCols, sVals) then
-            if rcount > 0 then
-                return true, 'ERROR: Duplicte key for successive rows'
+            if rCount > 0 then
+                return true, 'ERROR: Duplicate key for successive rows'
             end
             for i, col in pairs(dCols) do
                 row[col] = dVals[i]
             end
-            rcount = rcount + 1
+            rCount = rCount + 1
         end
     end
     if not netdb.server.saveDb(database, db) then
         return false, 'Could not save Database'
     end
-    return true, rcount .. ' rows updated'
+    return true, rCount .. ' rows updated'
 end
 
 ---Insert a new row into the table
@@ -690,7 +690,7 @@ function netdb.server.insert(database, tableName, cols, vals)
         if db._schema[tableName][col].unique then
             for _, row in pairs(tbl) do
                 if row[col] == vals[i] then
-                    return false, 'Duplicte key for column `' .. col .. '`'
+                    return false, 'Duplicate key for column `' .. col .. '`'
                 end
             end
         end
@@ -1182,7 +1182,7 @@ function netdb.server.execute(database, args)
             return false, 'Missing data'
         end
         return netdb.server.put(database, args[2], sCols, sVals, dCols, dVals)
-    elseif args[1] == 'create' and string.lower(args[2]) == 'table' then -- CREATE TABLE table ( col type def unique def=default )
+    elseif args[1] == 'create' and string.lower(args[2]) == 'table' then -- CREATE TABLE table ( col type UNIQUE NOT_NIL PRIMARY_KEY def=default )
         local table = args[3]
         if string.start(table, '_') then
             return false, 'Invalid table name, can not start with an _'
@@ -1220,7 +1220,7 @@ function netdb.server.execute(database, args)
         end
         netdb.server.saveDb(database, db)
         return true, 'Table `' .. table .. '` created'
-    elseif args[1] == 'alter' and string.lower(args[2]) == 'table' then -- `ALTER TABLE table ADD column type UNIQUE def=default` or `ALTER TABLE table DROP column` or `ALTER TABLE table MODIFY column type UNIQUE def=default`
+    elseif args[1] == 'alter' and string.lower(args[2]) == 'table' then -- `ALTER TABLE table ADD column type UNIQUE NOT_NIL PRIMARY_KEY def=default` or `ALTER TABLE table DROP column` or `ALTER TABLE table MODIFY column type UNIQUE NOT_NIL PRIMARY_KEY def=default`
         local db = netdb.server.loadDb(database)
         if not db then
             return false, 'Database does not exist'
@@ -1303,7 +1303,7 @@ function netdb.server.execute(database, args)
             return false, 'Database does not exist'
         end
         args[2] = string.lower(args[2])
-        if args[2] == 'schema' then -- GET SCHEMA
+        if args[2] == 'schema' then -- GET SCHEMA table
             local table = args[3]
             if not db[table] then
                 return false, 'Table does not exist'
