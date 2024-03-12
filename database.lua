@@ -239,24 +239,24 @@ local function serverHandler(msg)
         end
         user = r[1]
         if user.access ~= '*' and type(user.access) == 'string' then
-            local t = string.split(user.access, ',')
+            local t = string.split(user.access --[[@as string]], ',')
             user.access = {}
             for _, db in pairs(t) do
                 user.access[db] = true
             end
         end
         if user.perms ~= '*' and type(user.perms) == 'string' then
-            local t = string.split(user.perms, ',')
+            local t = string.split(user.perms --[[@as string]], ',')
             user.perms = {}
             for _, perm in pairs(t) do
                 user.perms[perm] = true
             end
         end
         if user.origin ~= '*' and type(user.origin) == 'string' then
-            local t = string.split(user.origin, ',')
+            local t = string.split(user.origin --[[@as string]], ',')
             user.origin = {}
-            for _, orign in pairs(t) do
-                user.origin[orign] = true
+            for _, origin in pairs(t) do
+                user.origin[origin] = true
             end
         end
     end
@@ -310,7 +310,7 @@ local function serverHandler(msg)
         if s then
             msg:reply(netdb.config.server.port,
                 { type = 'netdb', method = 'return', suc = true },
-                r
+                { r }
             )
         else
             msg:reply(netdb.config.server.port,
@@ -330,7 +330,7 @@ local function serverHandler(msg)
         if s then
             msg:reply(netdb.config.server.port,
                 { type = 'netdb', method = 'return', suc = true },
-                r
+                { r }
             )
         else
             msg:reply(netdb.config.server.port,
@@ -350,7 +350,7 @@ local function serverHandler(msg)
         if s then
             msg:reply(netdb.config.server.port,
                 { type = 'netdb', method = 'return', suc = true },
-                r
+                { r }
             )
         else
             msg:reply(netdb.config.server.port,
@@ -727,7 +727,7 @@ function netdb.server.insert(database, tableName, cols, vals)
     return true, 'Row inserted'
 end
 
----Check if a row maching selector exists
+---Check if a row matching selector exists
 ---@param database string Database name
 ---@param tableName string Table name
 ---@param cols table List of selector columns
@@ -1023,7 +1023,7 @@ function netdb.server.getArgs(cmd)
     return cmds
 end
 
----Splits KV argument into seperate lists
+---Splits KV argument into separate lists
 ---@param arr any
 ---@return table|nil
 ---@return table|nil
@@ -1067,15 +1067,6 @@ function netdb.server.splitKv(arr)
     end
     return k, v
 end
-
--- netdb.server.getArgs('INSERT INTO table1 id, name VALUES 0, "Peter"')
--- netdb.server.getArgs('INSERT INTO table1 id, name, age VALUES 0, "Peter", 18')
--- netdb.server.getArgs('SELECT * FROM table1 WHERE id=0')
--- netdb.server.getArgs('SELECT * FROM table1 WHERE id=0, name="Peter"')
--- netdb.server.getArgs('SELECT * FROM table1 WHERE id=0, name="Peter", age=18')
-
--- netdb.server.run('db1', 'SELECT * FROM table1 WHERE id=0')
--- netdb.server.getArgs('INSERT INTO accounts acc, name, balance VALUES 0, "Peter Crall", 1000000')
 
 local function fixArr(arr)
     if arr == nil then
