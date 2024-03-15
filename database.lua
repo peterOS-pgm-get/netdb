@@ -1128,6 +1128,124 @@ local function fixArr(arr)
     return arr
 end
 
+local function parseWhere(args, sI)
+    local condition = {}
+    local cI = 1
+    local nextNot = false
+    local nextCol = nil ---@type nil|string
+    local nextOp = nil ---@type nil|fun(self: table, value: any): boolean
+    for i=sI,#args do
+        if type(args[i]) == "table" then
+            local o = {
+                col = args[i].key,
+                val = args[i].value,
+                notCondition = nextNot
+            }
+            function o:check(value)
+                return self.val == value
+            end
+            condition[cI] = o
+            cI = cI + 1
+            nextCol = nil
+            nextOp = nil
+            nextNot = false
+        else
+            if args[i] == "NOT" then
+                nextNot = true
+                nextCol = nil
+                nextOp = nil
+            elseif args[i] == "AND" then
+                condition[cI] = "AND"
+                cI = cI + 1
+                nextCol = nil
+                nextOp = nil
+                nextNot = false
+            elseif args[i] == "OR" then
+                condition[cI] = "OR"
+                cI = cI + 1
+                nextCol = nil
+                nextOp = nil
+                nextNot = false
+            elseif args[i] == "=" then
+                nextOp = function(self, value)
+                    return value == self.val
+                end
+            elseif args[i] == "<" then
+                nextOp = function(self, value)
+                    return value < self.val
+                end
+            elseif args[i] == ">" then
+                nextOp = function(self, value)
+                    return value > self.val
+                end
+            elseif args[i] == "<=" then
+                nextOp = function(self, value)
+                    return value <= self.val
+                end
+            elseif args[i] == ">=" then
+                nextOp = function(self, value)
+                    return value >= self.val
+                end
+            elseif args[i] == "!=" then
+                nextOp = function(self, value)
+                    return value ~= self.val
+                end
+            elseif args[i] == "BETWEEN" then
+                nextOp = function(self, value)
+                    return self.val[1] <= value and value <= self.val[2]
+                end
+            elseif args[i] == "IN" then
+                nextOp = function(self, value)
+                    for _, val in pairs(self.val) do
+                        if value ~= val then
+                            return true
+                        end
+                    end
+                    return false
+                end
+            else
+                if(nextOp) then
+                    local o = {
+                        col = nextCol,
+                        val = args[i],
+                        notCondition = nextNot
+                    }
+                    o.check = nextOp
+                    condition[cI] = o
+                    cI = cI + 1
+                    nextCol = nil
+                    nextOp = nil
+                    nextNot = false
+                else
+                    nextCol = args[i]
+                end
+            end
+        end
+    end
+end
+local function checkWhere(row, condition)
+    local valid = false
+    for i = 1, #condition do
+        local con = condition[i]
+        if type(con) == "table" then
+            local v = con:check(row[con.col])
+            if con.notCondition then
+                v = not v
+            end
+            if i > 1 then
+                if condition[i - 1] == "AND" then
+                    valid = valid and v
+                elseif condition[i - 1] == "OR" then
+                    valid = valid or v
+                end
+            else
+                valid = v
+            end
+        end
+    end
+    return valid
+end
+
 ---Run SQL style commands(s)
 ---@param database string Database name
 ---@param cmd string SQL style command (can contain `;` for separating commands)
