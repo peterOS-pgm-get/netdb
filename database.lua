@@ -562,6 +562,44 @@ function netdb.server.saveDb(database, db)
     return true
 end
 
+---@class SQLWhere
+---@field isWhere `true`
+---@field conditions SQLWhereCondition[] conditions
+
+---@class SQLWhereCondition
+---@field col string column
+---@field val any value
+---@field prevOperator nil|"AND"|"OR"
+---@field notCondition boolean if the conditions should be not-ed
+---@field check fun(value: any, condition: SQLWhere): boolean Operator check function
+
+---Check if row matches WHERE condition
+---@param row table database row
+---@param condition SQLWhere condition from `parseWhere`
+---@return boolean
+local function checkWhere(row, condition)
+    local valid = true
+    for i = 1, #condition.conditions do
+        local con = condition.conditions[i]
+        if type(con) == "table" then
+            local v = con:check(row[con.col])
+            if con.notCondition then
+                v = not v
+            end
+            if i > 1 then
+                if con.prevOperator == "AND" then
+                    valid = valid and v
+                elseif con.prevOperator == "OR" then
+                    valid = valid or v
+                end
+            else
+                valid = v
+            end
+        end
+    end
+    return valid
+end
+
 ---Checks if the given columns and values are valid under the schema
 ---@param db table Database
 ---@param table string Table name
@@ -571,15 +609,31 @@ end
 ---@return string error
 local function validCols(db, table, cols, vals)
     if cols then
-        for i, col in pairs(cols) do
-            if not db._schema[table][col] then
-                return false, 'Invalid column: `' .. col .. '`'
+        if cols.isWhere then
+            ---@cast cols SQLWhere
+            for _, condition in pairs(cols.conditions) do
+                if not db._schema[table][condition.col] then
+                    return false, 'Invalid column: `' .. condition.col .. '`'
+                end
+                if type(condition.val) ~= db._schema[table][condition.col].type then
+                    if condition.val == nil and (db._schema[table][condition.col].notNil) then
+                        return false,
+                            'Invalid type for column `' ..
+                            condition.col .. '`, must be ' .. db._schema[table][condition.col].type .. ' but was ' .. type(condition.val)
+                    end
+                end
             end
-            if vals and type(vals[i]) ~= db._schema[table][col].type then
-                if vals[i] == nil and (db._schema[table][col].notNil) then
-                    return false,
-                        'Invalid type for column `' ..
-                        col .. '`, must be ' .. db._schema[table][col].type .. ' but was ' .. type(vals[i])
+        else
+            for i, col in pairs(cols) do
+                if not db._schema[table][col] then
+                    return false, 'Invalid column: `' .. col .. '`'
+                end
+                if vals and type(vals[i]) ~= db._schema[table][col].type then
+                    if vals[i] == nil and (db._schema[table][col].notNil) then
+                        return false,
+                            'Invalid type for column `' ..
+                            col .. '`, must be ' .. db._schema[table][col].type .. ' but was ' .. type(vals[i])
+                    end
                 end
             end
         end
@@ -590,6 +644,9 @@ end
 local function rowMatch(row, cols, vals)
     if not cols then
         return true
+    end
+    if cols.isWhere then
+        return checkWhere(row, cols)
     end
     for i, col in pairs(cols) do
         if type(vals[i]) == 'table' then
@@ -611,11 +668,119 @@ local function rowMatch(row, cols, vals)
     return true
 end
 
+---Parse arguments for WHERE condition clause
+---@param args table args table
+---@param sI number start index in args
+---@return SQLWhere where condition
+local function parseWhere(args, sI)
+    local condition = { ---@type SQLWhere
+        isWhere = true,
+        conditions = {}
+    }
+    local cI = 1
+    local nextNot = false
+    local nextCol = nil ---@type nil|string
+    local nextCheck = nil ---@type nil|fun(self: table, value: any): boolean
+    local nextOp = nil ---@type nil|"AND"|"OR"
+    if args[sI] then
+        return condition
+    end
+    for i = sI, #args do
+        if type(args[i]) == "table" then
+            local o = { ---@type SQLWhereCondition
+                col = args[i].key,
+                val = args[i].value,
+                notCondition = nextNot,
+                prevOperator = nextOp,
+                check = function(self, value)
+                    return self.val == value
+                end
+            }
+
+            condition.conditions[cI] = o
+            cI = cI + 1
+
+            nextCol = nil
+            nextCheck = nil
+            nextOp = nil
+            nextNot = false
+        else
+            if args[i] == "NOT" then
+                nextNot = true
+                nextCol = nil
+                nextCheck = nil
+            elseif args[i] == "AND" or args[i] == "OR" then
+                nextOp = args[i]
+                nextCol = nil
+                nextCheck = nil
+                nextNot = false
+            elseif args[i] == "=" then
+                nextCheck = function(self, value)
+                    return value == self.val
+                end
+            elseif args[i] == "<" then
+                nextCheck = function(self, value)
+                    return value < self.val
+                end
+            elseif args[i] == ">" then
+                nextCheck = function(self, value)
+                    return value > self.val
+                end
+            elseif args[i] == "<=" then
+                nextCheck = function(self, value)
+                    return value <= self.val
+                end
+            elseif args[i] == ">=" then
+                nextCheck = function(self, value)
+                    return value >= self.val
+                end
+            elseif args[i] == "!=" then
+                nextCheck = function(self, value)
+                    return value ~= self.val
+                end
+            elseif args[i] == "BETWEEN" then
+                nextCheck = function(self, value)
+                    return self.val[1] <= value and value <= self.val[2]
+                end
+            elseif args[i] == "IN" then
+                nextCheck = function(self, value)
+                    for _, val in pairs(self.val) do
+                        if value ~= val then
+                            return true
+                        end
+                    end
+                    return false
+                end
+            else
+                if (nextCheck) then
+                    local o = { ---@type SQLWhereCondition
+                        col = nextCol --[[@as string]],
+                        val = args[i],
+                        notCondition = nextNot,
+                        prevOperator = nextOp,
+                        check = nextCheck
+                    }
+                    condition[cI] = o
+                    cI = cI + 1
+
+                    nextCol = nil
+                    nextCheck = nil
+                    nextOp = nil
+                    nextNot = false
+                else
+                    nextCol = args[i]
+                end
+            end
+        end
+    end
+    return condition
+end
+
 ---Get data from the database
 ---@param database string Database name
 ---@param tableName string Table name
----@param sCols string[]|nil List of selector columns
----@param sVals any[]|nil List of selector values
+---@param sCols string[]|table|nil List of selector columns **OR** where selector
+---@param sVals any[]|nil List of selector values. **If using where selector, make `nil`**
 ---@param cols string[]|nil List of columns to get
 ---@return boolean success
 ---@return table|string rsp List of rows matching selector OR error description
@@ -659,8 +824,8 @@ end
 ---Put data into the database
 ---@param database string Database name
 ---@param tableName string Table name
----@param sCols string[] List of selector columns
----@param sVals any[] List of selector values
+---@param sCols string[]|table List of selector columns **OR** where selector
+---@param sVals any[]|nil List of selector values **If using where selector, make `nil`**
 ---@param dCols string[] List of data columns to set
 ---@param dVals any[] List of values to set columns to
 ---@return boolean success
@@ -819,8 +984,8 @@ end
 ---Delete data from the database
 ---@param database string Database name
 ---@param tableName string Table name
----@param sCols table List of selector columns
----@param sVals table List of selector values
+---@param sCols table List of selector columns **OR** where selector
+---@param sVals table|nil List of selector values **If using where selector, make `nil`**
 ---@return boolean success
 ---@return string rsp `'<#> rows deleted'` OR error description
 function netdb.server.delete(database, tableName, sCols, sVals)
@@ -1128,124 +1293,6 @@ local function fixArr(arr)
     return arr
 end
 
-local function parseWhere(args, sI)
-    local condition = {}
-    local cI = 1
-    local nextNot = false
-    local nextCol = nil ---@type nil|string
-    local nextOp = nil ---@type nil|fun(self: table, value: any): boolean
-    for i=sI,#args do
-        if type(args[i]) == "table" then
-            local o = {
-                col = args[i].key,
-                val = args[i].value,
-                notCondition = nextNot
-            }
-            function o:check(value)
-                return self.val == value
-            end
-            condition[cI] = o
-            cI = cI + 1
-            nextCol = nil
-            nextOp = nil
-            nextNot = false
-        else
-            if args[i] == "NOT" then
-                nextNot = true
-                nextCol = nil
-                nextOp = nil
-            elseif args[i] == "AND" then
-                condition[cI] = "AND"
-                cI = cI + 1
-                nextCol = nil
-                nextOp = nil
-                nextNot = false
-            elseif args[i] == "OR" then
-                condition[cI] = "OR"
-                cI = cI + 1
-                nextCol = nil
-                nextOp = nil
-                nextNot = false
-            elseif args[i] == "=" then
-                nextOp = function(self, value)
-                    return value == self.val
-                end
-            elseif args[i] == "<" then
-                nextOp = function(self, value)
-                    return value < self.val
-                end
-            elseif args[i] == ">" then
-                nextOp = function(self, value)
-                    return value > self.val
-                end
-            elseif args[i] == "<=" then
-                nextOp = function(self, value)
-                    return value <= self.val
-                end
-            elseif args[i] == ">=" then
-                nextOp = function(self, value)
-                    return value >= self.val
-                end
-            elseif args[i] == "!=" then
-                nextOp = function(self, value)
-                    return value ~= self.val
-                end
-            elseif args[i] == "BETWEEN" then
-                nextOp = function(self, value)
-                    return self.val[1] <= value and value <= self.val[2]
-                end
-            elseif args[i] == "IN" then
-                nextOp = function(self, value)
-                    for _, val in pairs(self.val) do
-                        if value ~= val then
-                            return true
-                        end
-                    end
-                    return false
-                end
-            else
-                if(nextOp) then
-                    local o = {
-                        col = nextCol,
-                        val = args[i],
-                        notCondition = nextNot
-                    }
-                    o.check = nextOp
-                    condition[cI] = o
-                    cI = cI + 1
-                    nextCol = nil
-                    nextOp = nil
-                    nextNot = false
-                else
-                    nextCol = args[i]
-                end
-            end
-        end
-    end
-end
-local function checkWhere(row, condition)
-    local valid = false
-    for i = 1, #condition do
-        local con = condition[i]
-        if type(con) == "table" then
-            local v = con:check(row[con.col])
-            if con.notCondition then
-                v = not v
-            end
-            if i > 1 then
-                if condition[i - 1] == "AND" then
-                    valid = valid and v
-                elseif condition[i - 1] == "OR" then
-                    valid = valid or v
-                end
-            else
-                valid = v
-            end
-        end
-    end
-    return valid
-end
-
 ---Run SQL style commands(s)
 ---@param database string Database name
 ---@param cmd string SQL style command (can contain `;` for separating commands)
@@ -1309,47 +1356,22 @@ function netdb.server.execute(database, args)
         local sCols, sVals
         if #args == 4 then
             -- no where
-        elseif #args == 6 then
-            sCols, sVals = netdb.server.splitKv(args[6])
-        elseif #args == 8 then
-            if args[7] == '=' then
-                sCols = { args[6] }
-                sVals = { args[8] }
-            elseif string.lower(args[7]) == 'in' then
-                sCols = { args[6] }
-                sVals = { {} }
-                -- local ai =
-                local a = string.split(string.sub(args[8], 2, -2), ',')
-                for i, v in pairs(a) do
-                    if string.start(v, '"') then
-                        sVals[1][i] = string.sub(v, 2, -2)
-                    elseif tonumber(v) then
-                        sVals[1][i] = tonumber(v)
-                    elseif v == 'true' then
-                        sVals[1][i] = true
-                    elseif v == 'false' then
-                        sVals[1][i] = false
-                    elseif v == 'nil' then
-                        sVals[1][i] = nil
-                    end
-                end
-            else
-                return false, 'Malformed select'
-            end
+        elseif args[5] == "WHERE" then
+            local condition = parseWhere(args, 6)
+            sCols = condition
         else
             return false, 'Malformed select'
         end
         return netdb.server.get(database, args[4], sCols, sVals, fixArr(sel))
     elseif args[1] == 'update' then -- UPDATE table SET cols=vals WHERE condition
-        local sCols, sVals = netdb.server.splitKv(args[6])
-        if not sCols or not sVals then
+        if not args[6] then
             return false, 'Missing selector'
         end
         local dCols, dVals = netdb.server.splitKv(args[4])
         if not dCols or not dVals then
             return false, 'Missing data'
         end
-        return netdb.server.put(database, args[2], sCols, sVals, dCols, dVals)
+        return netdb.server.put(database, args[2], parseWhere(args, 6), nil, dCols, dVals)
     elseif args[1] == 'create' and string.lower(args[2]) == 'table' then -- CREATE TABLE table ( col type UNIQUE NOT_NIL PRIMARY_KEY def=default )
         local table = args[3]
         if string.start(table, '_') then
@@ -1489,11 +1511,10 @@ function netdb.server.execute(database, args)
         if not db then
             return false, 'Database does not exist'
         end
-        local sCols, sVals = netdb.server.splitKv(args[5])
-        if not sCols or not sVals then
+        if not args[5] then
             return false, 'Missing selector'
         end
-        return netdb.server.delete(database, args[3], sCols, sVals)
+        return netdb.server.delete(database, args[3], parseWhere(args, 5))
     end
     return false, 'Unknown action'
 end
