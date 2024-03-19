@@ -68,7 +68,7 @@ function DBUser.parse(user)
     local userOut = {}
     setmetatable(user, { __index = DBUser })
     if user.access ~= '*' and type(user.access) == 'string' then
-        local t = string.split(user.access, ',')
+        local t = user.access:split(',')
         userOut.access = {}
         for _, db in pairs(t) do
             userOut.access[db] = true
@@ -79,7 +79,7 @@ function DBUser.parse(user)
         }
     end
     if user.perms ~= '*' and type(user.perms) == 'string' then
-        local t = string.split(user.perms, ',')
+        local t = user.perms:split(',')
         userOut.perms = {}
         for _, perm in pairs(t) do
             userOut.perms[perm] = true
@@ -90,7 +90,7 @@ function DBUser.parse(user)
         }
     end
     if user.origin ~= '*' and type(user.origin) == 'string' then
-        local t = string.split(user.origin, ',')
+        local t = user.origin:split(',')
         userOut.origin = {}
         for _, origin in pairs(t) do
             userOut.origin[origin] = true
@@ -410,14 +410,14 @@ local function serverHandler(msg)
         end
         return
     elseif method == 'run' then
-        local m = string.lower(string.split(msg.body.cmd, ' ')[1])
+        local m = msg.body.cmd:split(' ')[1]:lower()
         if not user:hasPerm(m) then
             msg:reply(netdb.config.server.port,
                 { type = 'netdb', method = 'return', suc = false },
-                { error = 'Invalid permissions: ' .. string.upper(m) }
+                { error = 'Invalid permissions: ' .. m:upper() }
             )
         end
-        log:debug('Cmd: ' .. string.sub(msg.body.cmd, 1, math.min(string.len(msg.body.cmd), 64)))
+        log:debug('Cmd: ' .. msg.body.cmd:sub(1, math.min(msg.body.cmd:len(), 64)))
         local s, r = netdb.server.run(dbName, msg.body.cmd)
         if s then
             msg:reply(netdb.config.server.port,
@@ -1044,7 +1044,7 @@ function netdb.server.listTables(database)
 
     local list = {}
     for name, _ in pairs(db) do
-        if not string.start(name, '_') then
+        if not name:start('_') then
             table.insert(list, name)
         end
     end
@@ -1105,18 +1105,18 @@ function netdb.server.hasDb(database)
 end
 
 function netdb.server.getArgs(cmd)
-    local parts = string.split(cmd, ' ')
+    local parts = cmd:split(' ')
     local inQuotes = false
     local temp = ''
     local arguments = {}
     local commands = {}
-    local c = false
+    local isList = false
     local lc = false
 
     local keyVal = nil
 
-    local par = nil
-    local pSet = {}
+    local isGroup = nil
+    local group = {}
 
     local function insert(val)
         if keyVal and inQuotes then
@@ -1124,66 +1124,66 @@ function netdb.server.getArgs(cmd)
             val = keyVal
             keyVal = nil
         end
-        if par then
-            table.insert(pSet, val)
+        if isGroup then
+            table.insert(group, val)
             return
         end
-        if c or lc then
+        if isList or lc then
             table.insert(arguments[#arguments], val)
         else
             table.insert(arguments, val)
         end
-        lc = c
+        lc = isList
     end
 
     for i = 1, #parts do
-        local p = parts[i]
+        local part = parts[i]
         local endCmd = false
-        c = (not (inQuotes or par)) and string.sub(p, -1) == ','
-        if c then
-            p = string.sub(p, 1, -2)
+        isList = (not (inQuotes or isGroup)) and part:sub(-1) == ','
+        if isList then
+            part = part:sub(1, -2)
             if not lc then table.insert(arguments, {}) end
         end
         if inQuotes then
-            if (string.sub(p, -2) == '";') then
+            if (part:sub(-2) == '";') then
                 endCmd = true
-                p = string.sub(p, -1)
+                part = part:sub(1, -2)
             end
-            if string.sub(p, -2) == '",' then
-                c = true
-                p = string.sub(p, 1, -2)
+            if part:sub(-2) == '",' then
+                isList = true
+                part = part:sub(1, -2)
             end
-            temp = temp .. ' ' .. p
-            if string.sub(p, -1) == '"' then
-                insert(string.sub(temp, 2, -2))
+            temp = temp .. ' ' .. part
+            if part:sub(-1) == '"' then
+                insert(temp:sub(2, -2))
                 inQuotes = false
             end
         else
-            if string.start(p, '"') then
-                if (string.sub(p, -2) == '";') then
+            if part:start('"') then
+                if (part:sub(-2) == '";') then
                     endCmd = true
-                    p = string.sub(p, -1)
+                    part = part:sub(1, -2)
                 end
-                if string.sub(p, -1) == '"' then
-                    insert(string.sub(p, 2, -2))
+                if part:sub(-1) == '"' then
+                    insert(part:sub(2, -2))
                 else
                     inQuotes = true
-                    temp = p
+                    temp = part
                 end
-            elseif string.len(p) > 1 and string.cont(p, '=') then
-                if (string.sub(p, -1) == ';') then
+            elseif part:len() > 1 and part:cont('=') then
+                if (part:sub(-1) == ';') then
                     endCmd = true
-                    p = string.sub(p, -1)
+                    part = part:sub(1, -2)
                 end
-                local pts2 = string.split(p, '=')
+                local pts2 = part:split('=')
                 keyVal = {
                     key = pts2[1],
                     val = table.concat(pts2, '=', 2)
                 }
-                if string.sub(keyVal.val, -1) == '"' then
-                    keyVal.val = string.sub(keyVal.val, 2, -2)
+                if keyVal.val:sub(-1) == '"' then
+                    keyVal.val = keyVal.val:sub(2, -2)
                     insert(keyVal)
-                elseif string.start(keyVal.val, '"') then
+                elseif keyVal.val:start('"') then
                     inQuotes = true
                     temp = keyVal.val
                 else
@@ -1191,39 +1191,39 @@ function netdb.server.getArgs(cmd)
                     keyVal.val = tonumber(keyVal.val) or keyVal.val
                     insert(keyVal)
                 end
-            elseif p == '(' then
-                par = {}
-            elseif par then
-                if (string.sub(p, -1) == ';') then
+            elseif part == '(' then
+                isGroup = {}
+            elseif isGroup then
+                if (part:sub(-1) == ';') then
                     endCmd = true
-                    p = string.sub(p, -1)
+                    part = part:sub(1, -2)
                 end
-                if p == ')' then
-                    table.insert(par, pSet)
-                    local t = par
-                    par = nil
+                if part == ')' then
+                    table.insert(isGroup, group)
+                    local t = isGroup
+                    isGroup = nil
                     insert(t)
                 else
-                    local parc = string.sub(p, -1) == ','
+                    local parc = part:sub(-1) == ','
                     if parc then
-                        p = string.sub(p, 1, -2)
+                        part = part:sub(1, -2)
                     end
-                    insert(p)
+                    insert(part)
                     if parc then
-                        table.insert(par, pSet)
-                        pSet = {}
+                        table.insert(isGroup, group)
+                        group = {}
                     end
                 end
             else
-                if (string.sub(p, -1) == ';') then
+                if (part:sub(-1) == ';') then
                     endCmd = true
-                    p = string.sub(p, -1)
+                    part = part:sub(1, -2)
                 end
-                local n = tonumber(p)
+                local n = tonumber(part)
                 if n then
                     insert(n)
                 else
-                    insert(p)
+                    insert(part)
                 end
             end
         end
@@ -1257,13 +1257,13 @@ function netdb.server.splitKv(arr)
             if kv[2] == '=' then
                 k[i] = kv[1]
                 v[i] = kv[3]
-            elseif string.lower(kv[2]) == 'in' then
+            elseif kv[2]:lower() == 'in' then
                 k[i] = kv[1]
                 v[i] = {}
-                local a = string.split(string.sub(kv[3], 2, -2), ',')
+                local a = kv[3]:sub(2, -2):split(',')
                 for j, val in pairs(a) do
-                    if string.start(val, '"') then
-                        v[i][j] = string.sub(val, 2, -2)
+                    if val:start('"') then
+                        v[i][j] = val:sub(2, -2)
                     elseif tonumber(val) then
                         v[i][j] = tonumber(val)
                     elseif val == 'true' then
@@ -1304,13 +1304,13 @@ function netdb.server.run(database, cmd)
         return netdb.server.execute(database, commands[1])
     end
     local results = {}
-    for i = 0, #commands do
-        if #commands[i] > 0 then
+    for i = 1, #commands do
+        if #(commands[i]) > 0 then
             local s, r = netdb.server.execute(database, commands[i])
-            if not s then
-                return false, r
-            end
             results[i] = r
+            if not s then
+                return false, results
+            end
         else
             results[i] = nil
         end
@@ -1324,9 +1324,9 @@ end
 ---@return any|string return command return or error string if failure
 function netdb.server.execute(database, args)
     netdb.setup()
-    args[1] = string.lower(args[1])
+    args[1] = args[1]:lower()
     if args[1] == 'show' then -- SHOW [DATABASE|TABLES|SCHEMA]
-        args[2] = string.lower(args[2])
+        args[2] = args[2]:lower()
         if args[2] == 'database' then
             return netdb.server.listDbs()
         end
@@ -1372,27 +1372,27 @@ function netdb.server.execute(database, args)
             return false, 'Missing data'
         end
         return netdb.server.put(database, args[2], parseWhere(args, 6), nil, dCols, dVals)
-    elseif args[1] == 'create' and string.lower(args[2]) == 'table' then -- CREATE TABLE table ( col type UNIQUE NOT_NIL PRIMARY_KEY def=default )
-        local table = args[3]
-        if string.start(table, '_') then
+    elseif args[1] == 'create' and args[2]:lower() == 'table' then -- CREATE TABLE table ( col type UNIQUE NOT_NIL PRIMARY_KEY def=default )
+        local tableName = args[3]
+        if tableName:start('_') then
             return false, 'Invalid table name, can not start with an _'
         end
         local db = netdb.server.loadDb(database)
         if not db then
             return false, 'Database does not exist'
         end
-        if db[table] then
+        if db[tableName] then
             return false, 'Table already exists'
         end
-        db[table] = {}
-        db._schema[table] = {}
+        db[tableName] = {}
+        db._schema[tableName] = {}
         for _, col in pairs(args[4]) do
             local schema = {
                 type = col[2],
                 def = nil,
                 unique = false,
             }
-            db._schema[table][col[1]] = schema
+            db._schema[tableName][col[1]] = schema
             for i = 3, #col do
                 if col[i] == 'UNIQUE' then
                     schema.unique = true
@@ -1409,8 +1409,8 @@ function netdb.server.execute(database, args)
             end
         end
         netdb.server.saveDb(database, db)
-        return true, 'Table `' .. table .. '` created'
-    elseif args[1] == 'alter' and string.lower(args[2]) == 'table' then -- `ALTER TABLE table ADD column type UNIQUE NOT_NIL PRIMARY_KEY def=default` or `ALTER TABLE table DROP column` or `ALTER TABLE table MODIFY column type UNIQUE NOT_NIL PRIMARY_KEY def=default`
+        return true, 'Table `' .. tableName .. '` created'
+    elseif args[1] == 'alter' and args[2]:lower() == 'table' then -- `ALTER TABLE table ADD column type UNIQUE NOT_NIL PRIMARY_KEY def=default` or `ALTER TABLE table DROP column` or `ALTER TABLE table MODIFY column type UNIQUE NOT_NIL PRIMARY_KEY def=default`
         local db = netdb.server.loadDb(database)
         if not db then
             return false, 'Database does not exist'
@@ -1420,7 +1420,7 @@ function netdb.server.execute(database, args)
             return false, 'Table does not exists'
         end
 
-        local opt = string.lower(args[4])
+        local opt = args[4]:lower()
         if opt == 'add' then
             local col = args[5]
             if db._schema[table][col] then
@@ -1451,7 +1451,7 @@ function netdb.server.execute(database, args)
             end
             netdb.server.saveDb(database, db)
             return true, 'Column added'
-        elseif opt == 'DROP' then
+        elseif opt == 'drop' then
             local col = args[5]
             if not db._schema[table][col] then
                 return false, 'Column does not exists'
@@ -1492,7 +1492,7 @@ function netdb.server.execute(database, args)
         if not db then
             return false, 'Database does not exist'
         end
-        args[2] = string.lower(args[2])
+        args[2] = args[2]:lower()
         if args[2] == 'schema' then -- GET SCHEMA table
             local table = args[3]
             if not db[table] then
