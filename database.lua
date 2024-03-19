@@ -289,7 +289,7 @@ local function serverHandler(msg)
         end
         local pHash = sha256.hash(msg.body.user.password)
         local s, r = netdb.server.run(netdb.config.server.serverdb,
-            'SELECT * FROM users WHERE name="' .. msg.body.user.name .. '", password="' .. pHash .. '"')
+            'SELECT * FROM users WHERE name = "' .. msg.body.user.name .. '" AND password = "' .. pHash .. '";')
         if not s or #r == 0 then
             if not s then
                 log:error('User Val error: ' .. r)
