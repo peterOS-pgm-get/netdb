@@ -1,4 +1,4 @@
-# Point of Sale
+# NetDB
 
 A [PeterOS](https://github.com/Platratio34/peterOS) [pgm-get](https://github.com/peterOS-pgm-get/pgm-get) program
 
