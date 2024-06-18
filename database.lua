@@ -52,7 +52,7 @@ _G.netdb = {
 ---@field origin {string: boolean} Where the user can connect from
 ---@field perms {string: boolean} Method permissions
 local DBUser = {}
-local DefaultDBUser = {
+local DefaultDBUser = { ---@type DBUser
     name = "",
     password = "",
     access = {["*"]=true},
@@ -278,7 +278,7 @@ local function serverHandler(msg)
         return
     end
 
-    local user = DefaultDBUser ---@type DBUser
+    local dbUser = DefaultDBUser
     if netdb.config.server.userCtrl then
         if not msg.body.user then
             msg:reply(netdb.config.server.port,
@@ -300,18 +300,18 @@ local function serverHandler(msg)
             )
             return
         end
-        user = DBUser.parse(r[1])
+        dbUser = DBUser.parse(r[1])
     end
 
     local dbName = msg.header.db
-    if not user:canAccess(dbName) then
+    if not dbUser:canAccess(dbName) then
         msg:reply(netdb.config.server.port,
             { type = 'netdb', method = 'return', suc = false },
             { error = 'User can not access database' }
         )
         return
     end
-    if not user:validOrigin(net.ipFormat(msg.origin)) then
+    if not dbUser:validOrigin(net.ipFormat(msg.origin)) then
         msg:reply(netdb.config.server.port,
             { type = 'netdb', method = 'return', suc = false },
             { error = 'Invalid origin for user' }
@@ -329,7 +329,7 @@ local function serverHandler(msg)
 
     log:debug('Msg')
     if method == 'get' then
-        if not user:hasPerm('select') then
+        if not dbUser:hasPerm('select') then
             msg:reply(netdb.config.server.port,
                 { type = 'netdb', method = 'return', suc = false },
                 { error = 'Invalid permissions: SELECT' }
@@ -349,7 +349,7 @@ local function serverHandler(msg)
         end
         return
     elseif method == 'put' then
-        if not user:hasPerm('update') then
+        if not dbUser:hasPerm('update') then
             msg:reply(netdb.config.server.port,
                 { type = 'netdb', method = 'return', suc = false },
                 { error = 'Invalid permissions: UPDATE' }
@@ -370,7 +370,7 @@ local function serverHandler(msg)
         end
         return
     elseif method == 'insert' then
-        if not user:hasPerm('insert') then
+        if not dbUser:hasPerm('insert') then
             msg:reply(netdb.config.server.port,
                 { type = 'netdb', method = 'return', suc = false },
                 { error = 'Invalid permissions: INSERT' }
@@ -390,7 +390,7 @@ local function serverHandler(msg)
         end
         return
     elseif method == 'exists' then
-        if not user:hasPerm('exists') then
+        if not dbUser:hasPerm('exists') then
             msg:reply(netdb.config.server.port,
                 { type = 'netdb', method = 'return', suc = false },
                 { error = 'Invalid permissions: EXISTS' }
@@ -411,7 +411,7 @@ local function serverHandler(msg)
         return
     elseif method == 'run' then
         local m = msg.body.cmd:split(' ')[1]:lower()
-        if not user:hasPerm(m) then
+        if not dbUser:hasPerm(m) then
             msg:reply(netdb.config.server.port,
                 { type = 'netdb', method = 'return', suc = false },
                 { error = 'Invalid permissions: ' .. m:upper() }
