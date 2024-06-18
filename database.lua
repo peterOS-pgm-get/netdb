@@ -66,7 +66,7 @@ setmetatable(DefaultDBUser, {__index = DBUser})
 ---@return DBUser user
 function DBUser.parse(user)
     local userOut = {}
-    setmetatable(user, { __index = DBUser })
+    setmetatable(userOut, { __index = DBUser })
     if user.access ~= '*' and type(user.access) == 'string' then
         local t = user.access:split(',')
         userOut.access = {}
