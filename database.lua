@@ -1,4 +1,3 @@
-local Logger = pos.require('logger')
 local sha256 = pos.require("hash.sha256")
 
 local defCfg = {
@@ -126,7 +125,7 @@ end
 
 local cfgPath = '/home/.appdata/netdb/netdb.cfg'
 
-local log = Logger('/home/.pgmLog/netdb.log')
+local log = pos.Logger('netdb.log', false, true)
 
 local function fillDef(cfg, def)
     local bad = false
