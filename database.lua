@@ -47,10 +47,11 @@ _G.netdb = {
 ---@class DBUser
 ---@field name string User name
 ---@field password string Password hash (SHA256)
----@field access {string: boolean} Databases the user can access
----@field origin {string: boolean} Where the user can connect from
----@field perms {string: boolean} Method permissions
+---@field access { [string]: boolean} Databases the user can access
+---@field origin { [string]: boolean} Where the user can connect from
+---@field perms { [string]: boolean} Method permissions
 local DBUser = {}
+---@diagnostic disable-next-line: missing-fields
 local DefaultDBUser = { ---@type DBUser
     name = "",
     password = "",
@@ -267,6 +268,8 @@ local function serverHandler(msg)
     if msg.header.type ~= 'netdb' then return end
     -- print('MSG was for server')
 
+    ---@cast msg NetDB.Message
+
     local method = msg.header.method
     if method == 'ping' then
         msg:reply(netdb.config.server.port,
@@ -277,18 +280,20 @@ local function serverHandler(msg)
         return
     end
 
+    local body = msg.body
+
     local dbUser = DefaultDBUser
     if netdb.config.server.userCtrl then
-        if not msg.body.user then
+        if not body.user then
             msg:reply(netdb.config.server.port,
                 { type = 'netdb', method = 'return', suc = false },
                 { error = 'Must specify user' }
             )
             return
         end
-        local pHash = sha256.hash(msg.body.user.password)
+        local pHash = sha256.hash(body.user.password)
         local s, r = netdb.server.run(netdb.config.server.serverdb,
-            'SELECT * FROM users WHERE name = "' .. msg.body.user.name .. '" AND password = "' .. pHash .. '";')
+            'SELECT * FROM users WHERE name = "' .. body.user.name .. '" AND password = "' .. pHash .. '";')
         if not s or #r == 0 then
             if not s then
                 log:error('User Val error: ' .. r)
@@ -328,13 +333,14 @@ local function serverHandler(msg)
 
     log:debug('Msg')
     if method == 'get' then
+        ---@cast body NetDB.Message.GetBody
         if not dbUser:hasPerm('select') then
             msg:reply(netdb.config.server.port,
                 { type = 'netdb', method = 'return', suc = false },
                 { error = 'Invalid permissions: SELECT' }
             )
         end
-        local s, r = netdb.server.get(dbName, msg.body.table, msg.body.sel.cols, msg.body.sel.vals, msg.body.cols)
+        local s, r = netdb.server.get(dbName, body.table, body.sel.cols, body.sel.vals, body.cols)
         if s then
             msg:reply(netdb.config.server.port,
                 { type = 'netdb', method = 'return', suc = true },
@@ -348,14 +354,15 @@ local function serverHandler(msg)
         end
         return
     elseif method == 'put' then
+        ---@cast body NetDB.Message.PutBody
         if not dbUser:hasPerm('update') then
             msg:reply(netdb.config.server.port,
                 { type = 'netdb', method = 'return', suc = false },
                 { error = 'Invalid permissions: UPDATE' }
             )
         end
-        local s, r = netdb.server.put(dbName, msg.body.table, msg.body.sel.cols, msg.body.sel.vals, msg.data.cols,
-            msg.data.vals)
+        local s, r = netdb.server.put(dbName, body.table, body.sel.cols, body.sel.vals, body.data.cols,
+        body.data.vals)
         if s then
             msg:reply(netdb.config.server.port,
                 { type = 'netdb', method = 'return', suc = true },
@@ -369,13 +376,14 @@ local function serverHandler(msg)
         end
         return
     elseif method == 'insert' then
+        ---@cast body NetDB.Message.InsertBody
         if not dbUser:hasPerm('insert') then
             msg:reply(netdb.config.server.port,
                 { type = 'netdb', method = 'return', suc = false },
                 { error = 'Invalid permissions: INSERT' }
             )
         end
-        local s, r = netdb.server.insert(dbName, msg.body.table, msg.body.cols, msg.body.vals)
+        local s, r = netdb.server.insert(dbName, body.table, body.cols, body.vals)
         if s then
             msg:reply(netdb.config.server.port,
                 { type = 'netdb', method = 'return', suc = true },
@@ -389,13 +397,14 @@ local function serverHandler(msg)
         end
         return
     elseif method == 'exists' then
+        ---@cast body NetDB.Message.ExistsBody
         if not dbUser:hasPerm('exists') then
             msg:reply(netdb.config.server.port,
                 { type = 'netdb', method = 'return', suc = false },
                 { error = 'Invalid permissions: EXISTS' }
             )
         end
-        local s, r = netdb.server.exists(dbName, msg.body.table, msg.body.cols, msg.body.vals)
+        local s, r = netdb.server.exists(dbName, body.table, body.cols, body.vals)
         if s then
             msg:reply(netdb.config.server.port,
                 { type = 'netdb', method = 'return', suc = true },
@@ -409,15 +418,15 @@ local function serverHandler(msg)
         end
         return
     elseif method == 'run' then
-        local m = msg.body.cmd:split(' ')[1]:lower()
+        local m = body.cmd:split(' ')[1]:lower()
         if not dbUser:hasPerm(m) then
             msg:reply(netdb.config.server.port,
                 { type = 'netdb', method = 'return', suc = false },
                 { error = 'Invalid permissions: ' .. m:upper() }
             )
         end
-        log:debug('Cmd: ' .. msg.body.cmd:sub(1, math.min(msg.body.cmd:len(), 64)))
-        local s, r = netdb.server.run(dbName, msg.body.cmd)
+        log:debug('Cmd: ' .. body.cmd:sub(1, math.min(body.cmd:len(), 64)))
+        local s, r = netdb.server.run(dbName, body.cmd)
         if s then
             msg:reply(netdb.config.server.port,
                 { type = 'netdb', method = 'return', suc = true },
@@ -546,7 +555,7 @@ function netdb.server.loadDb(database)
 end
 
 ---Saves a database
----@param database string Database namer
+---@param database string Database name
 ---@param db table Database
 ---@return boolean success If the database was saved
 function netdb.server.saveDb(database, db)
