@@ -1,5 +1,10 @@
 local sha256 = pos.require("hash.sha256")
 
+---@class NetDB.Config
+---@field isServer boolean If the server should be automatically started
+---@field port number The default port to use
+
+---@type NetDB.Config
 local defCfg = {
     isServer = false,
     server = {
@@ -44,89 +49,22 @@ _G.netdb = {
     server = {}
 }
 
----@class DBUser
----@field name string User name
----@field password string Password hash (SHA256)
----@field access { [string]: boolean} Databases the user can access
----@field origin { [string]: boolean} Where the user can connect from
----@field perms { [string]: boolean} Method permissions
-local DBUser = {}
----@diagnostic disable-next-line: missing-fields
-local DefaultDBUser = { ---@type DBUser
-    name = "",
-    password = "",
-    access = {["*"]=true},
-    origin = {["*"]=true},
-    perms = {["*"]=true}
-}
-setmetatable(DefaultDBUser, {__index = DBUser})
+---@class KVPair
+---@field key string
+---@field val string|number|boolean
 
----Converts database return to DBUser
----@param user table
----@return DBUser user
-function DBUser.parse(user)
-    local userOut = {}
-    setmetatable(userOut, { __index = DBUser })
-    if user.access ~= '*' and type(user.access) == 'string' then
-        local t = user.access:split(',')
-        userOut.access = {}
-        for _, db in pairs(t) do
-            userOut.access[db] = true
-        end
-    elseif user.access == '*' then
-        userOut.access = {
-            ['*'] = true
-        }
-    end
-    if user.perms ~= '*' and type(user.perms) == 'string' then
-        local t = user.perms:split(',')
-        userOut.perms = {}
-        for _, perm in pairs(t) do
-            userOut.perms[perm] = true
-        end
-    elseif user.perms == '*' then
-        userOut.perms = {
-            ['*'] = true
-        }
-    end
-    if user.origin ~= '*' and type(user.origin) == 'string' then
-        local t = user.origin:split(',')
-        userOut.origin = {}
-        for _, origin in pairs(t) do
-            userOut.origin[origin] = true
-        end
-    elseif user.origin == '*' then
-        userOut.origin = {
-            ['*'] = true
-        }
-    end
-    return userOut
-end
-
----Returns if the user can access the specified database
----@param database string
----@return boolean can
-function DBUser:canAccess(database)
-    return self.access['*'] or self.access[database]
-end
-
----Checks if the specified origin is valid for the user (String IP or HW address)
----@param origin string
----@return boolean valid
-function DBUser:validOrigin(origin)
-    return self.origin['*'] or self.origin[origin]
-end
-
----Checks if the user has the specified method permission
----@param perm string
----@return boolean has
-function DBUser:hasPerm(perm)
-    return self.perms['*'] or self.perms[perm]
-end
+local DBUser, DefaultDBUser = dofile('DBUser.lua') ---@type DBUser, DBUser
 
 local cfgPath = '/home/.appdata/netdb/netdb.cfg'
 
 local log = pos.Logger('netdb.log', false, true)
+log:setLevel(5)
+
+local function debugPrintArgs(args)
+    for i,a in pairs(args) do
+        log:debug('[%d] %s', i, textutils.serialise(a))
+    end
+end
 
 local function fillDef(cfg, def)
     local bad = false
@@ -456,7 +394,7 @@ local defaultIndex = {
 ---Starts the NetDB server
 ---@return boolean started if the startup was successful
 function netdb.server.start()
-    if server.handler then
+    if server.index then
         return true
     end
     log:info('Starting NetDB server')
@@ -512,8 +450,13 @@ function netdb.server.start()
             sha256.hash('root') .. '", "*", "*", "*"')
     end
 
-    server.handler = net.registerMsgHandler(serverHandler)
-    net.open(netdb.config.server.port)
+    if not netdb.config.localOnly then
+        log:info('Adding server net handler')
+        server.handler = net.registerMsgHandler(serverHandler)
+        net.open(netdb.config.server.port)
+    else
+        log:warn('Staring server in local only mode. Restart required for net access')
+    end
     log:info('NetDB server started')
     return true
 end
@@ -603,6 +546,9 @@ local function checkWhere(row, condition)
             else
                 valid = v
             end
+        else
+            log:error('Unknown condition type: %s', type(con))
+            error('Unknown condition type: '..type(con))
         end
     end
     return valid
@@ -621,7 +567,7 @@ local function validCols(db, table, cols, vals)
             ---@cast cols SQLWhere
             for _, condition in pairs(cols.conditions) do
                 if not db._schema[table][condition.col] then
-                    return false, 'Invalid column: `' .. condition.col .. '`'
+                    return false, 'Invalid column: `' .. condition.col .. '`, no such column'
                 end
                 if type(condition.val) ~= db._schema[table][condition.col].type then
                     if condition.val == nil and (db._schema[table][condition.col].notNil) then
@@ -634,7 +580,7 @@ local function validCols(db, table, cols, vals)
         else
             for i, col in pairs(cols) do
                 if not db._schema[table][col] then
-                    return false, 'Invalid column: `' .. col .. '`'
+                    return false, 'Invalid column: ' .. textutils.serialize(col) .. ', no such column'
                 end
                 if vals and type(vals[i]) ~= db._schema[table][col].type then
                     if vals[i] == nil and (db._schema[table][col].notNil) then
@@ -690,14 +636,17 @@ local function parseWhere(args, sI)
     local nextCol = nil ---@type nil|string
     local nextCheck = nil ---@type nil|fun(self: table, value: any): boolean
     local nextOp = nil ---@type nil|"AND"|"OR"
-    if args[sI] then
+    if not args[sI] then
         return condition
     end
     for i = sI, #args do
         if type(args[i]) == "table" then
+            if(args[i].val == nil) then
+                printError('got nil value for column '..args[i].key)
+            end
             local o = { ---@type SQLWhereCondition
                 col = args[i].key,
-                val = args[i].value,
+                val = args[i].val,
                 notCondition = nextNot,
                 prevOperator = nextOp,
                 check = function(self, value)
@@ -1112,35 +1061,43 @@ function netdb.server.hasDb(database)
     return server.index.dbs[database] ~= nil
 end
 
+---@alias DBCommandArg string|number|boolean|KVPair|DBCommandArg[]
+
+---@param cmd string
+---@return DBCommandArg[][]
 function netdb.server.getArgs(cmd)
     local parts = cmd:split(' ')
     local inQuotes = false
-    local temp = ''
-    local arguments = {}
-    local commands = {}
+    local temp = '' ---@type any|KVPair
+    local arguments = {} ---@type DBCommandArg[]
+    local commands = {} ---@type DBCommandArg[][]
     local isList = false
     local lc = false
 
-    local keyVal = nil
+    local keyVal = nil ---@type KVPair?
 
     local isGroup = nil
     local group = {}
 
+    ---@param val string|number|boolean|KVPair
     local function insert(val)
-        if keyVal and inQuotes then
+        expect(1, val, "string", "number", "boolean", "table")
+        if keyVal and val ~= keyVal then
+            expect(1, val, "string", "number", "boolean")
+            ---@cast val -KVPair
             keyVal.val = val
             val = keyVal
-            keyVal = nil
         end
         if isGroup then
             table.insert(group, val)
             return
         end
         if isList or lc then
-            table.insert(arguments[#arguments], val)
+            table.insert(arguments[#arguments]--[[@as table]], val)
         else
             table.insert(arguments, val)
         end
+        keyVal = nil
         lc = isList
     end
 
@@ -1195,10 +1152,35 @@ function netdb.server.getArgs(cmd)
                     inQuotes = true
                     temp = keyVal.val
                 else
+                    if (keyVal.val == nil) then
+                        log:error('Got nil for value in parsing args')
+                        error("Got nil for value")
+                    else
+                        -- print('key value was '..tostring(keyVal.val))
+                    end
                     ---@diagnostic disable-next-line: assign-type-mismatch
                     keyVal.val = tonumber(keyVal.val) or keyVal.val
+                    if(keyVal.val == nil) then
+                        printError("Got nil for value (2)")
+                    else
+                        -- print('key value (2) was '..tostring(keyVal.val))
+                    end
                     insert(keyVal)
                 end
+            elseif part == '=' then
+                if keyVal then
+                    log:error('Encountered equals in kv')
+                    error('Encountered equals in kv')
+                end
+                if #arguments == 0 then
+                    log:error('Encountered = as first token')
+                    error('Encountered = as first token')
+                end
+                keyVal = {
+                    key = arguments[#arguments] --[[@as string]],
+                    val = ''
+                }
+                table.remove(arguments,#arguments)
             elseif part == '(' then
                 isGroup = {}
             elseif isGroup then
@@ -1243,23 +1225,27 @@ function netdb.server.getArgs(cmd)
     if arguments and #arguments > 0 then
         table.insert(commands, arguments)
     end
+    -- print(textutils.serialise(commands))
     return commands
 end
 
 ---Splits KV argument into separate lists
----@param arr any
+---@param arr KVPair|KVPair[]
 ---@return table|nil
 ---@return table|nil
 function netdb.server.splitKv(arr)
+    expect(1, arr, 'table')
     if not arr then
         return nil
     end
     local k, v = {}, {}
     if arr.key then
+        ---@cast arr KVPair
         k = { arr.key }
         v = { arr.val }
         return k, v
     end
+    ---@cast arr KVPair[]
     for i, kv in pairs(arr) do
         if kv[1] then
             if kv[2] == '=' then
@@ -1309,7 +1295,18 @@ end
 function netdb.server.run(database, cmd)
     local commands = netdb.server.getArgs(cmd)
     if (#commands == 1) then
-        return netdb.server.execute(database, commands[1])
+        local s, r, r2 = pcall(function()
+            -- print(cmd)
+            return netdb.server.execute(database, commands[1])
+        end)
+        if (not s) then
+            printError('Error processing query:')
+            printError(cmd)
+            log:error('Error processing query: %s', cmd)
+            log:error(r)
+            error(r)
+        end
+        return r, r2
     end
     local results = {}
     for i = 1, #commands do
@@ -1332,6 +1329,8 @@ end
 ---@return any|string return command return or error string if failure
 function netdb.server.execute(database, args)
     netdb.setup()
+    log:debug('Executing query:')
+    debugPrintArgs(args)
     args[1] = args[1]:lower()
     if args[1] == 'show' then -- SHOW [DATABASE|TABLES|SCHEMA]
         args[2] = args[2]:lower()
@@ -1368,7 +1367,7 @@ function netdb.server.execute(database, args)
             local condition = parseWhere(args, 6)
             sCols = condition
         else
-            return false, 'Malformed select'
+            return false, 'Malformed select: expected WHERE clause'
         end
         return netdb.server.get(database, args[4], sCols, sVals, fixArr(sel))
     elseif args[1] == 'update' then -- UPDATE table SET cols=vals WHERE condition

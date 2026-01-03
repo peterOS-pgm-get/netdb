@@ -3,7 +3,11 @@
     "files": [
         "database.lua",
         "cmd.lua",
-        "DBConnector.lua"
+        "DBConnector.lua",
+        "DBUser.lua",
+        "SQLWhere.lua",
+        "Tokenizer.lua",
+        "server.lua"
     ],
     "exec": "cmd.lua",
     "cmpt": null,
