@@ -14,7 +14,8 @@ local defCfg = {
         serverdb = 'netdb',
         userCtrl = false
     },
-    port = 10031
+    port = 10031,
+    localOnly = false
 }
 
 local internalDBSchema = {
@@ -1380,7 +1381,14 @@ function netdb.server.execute(database, args)
         end
         return netdb.server.put(database, args[2], parseWhere(args, 6), nil, dCols, dVals)
     elseif args[1] == 'create' and args[2]:lower() == 'table' then -- CREATE TABLE table ( col type UNIQUE NOT_NIL PRIMARY_KEY def=default )
-        local tableName = args[3]
+        local next = 3
+        local ine = false
+        if args[next] == "IF" then
+            next = next + 3
+            ine = true
+        end
+        local tableName = args[next]
+        next = next + 1
         if tableName:start('_') then
             return false, 'Invalid table name, can not start with an _'
         end
@@ -1389,11 +1397,14 @@ function netdb.server.execute(database, args)
             return false, 'Database does not exist'
         end
         if db[tableName] then
+            if ine then
+                return true, 'Table already existed'
+            end
             return false, 'Table already exists'
         end
         db[tableName] = {}
         db._schema[tableName] = {}
-        for _, col in pairs(args[4]) do
+        for _, col in pairs(args[next]) do
             local schema = {
                 type = col[2],
                 def = nil,
