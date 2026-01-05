@@ -1088,9 +1088,11 @@ function netdb.server.getArgs(cmd)
             ---@cast val -KVPair
             keyVal.val = val
             val = keyVal
+            keyVal = nil
         end
         if isGroup then
             table.insert(group, val)
+            keyVal = nil
             return
         end
         if isList or lc then
@@ -1146,6 +1148,12 @@ function netdb.server.getArgs(cmd)
                     key = pts2[1],
                     val = table.concat(pts2, '=', 2)
                 }
+                local parc = false
+                if keyVal.val:sub(-1) == ',' then
+                    keyVal.val = keyVal.val:sub(2, -2)
+                    isList = true
+                    parc = true
+                end
                 if keyVal.val:sub(-1) == '"' then
                     keyVal.val = keyVal.val:sub(2, -2)
                     insert(keyVal)
@@ -1161,12 +1169,16 @@ function netdb.server.getArgs(cmd)
                     end
                     ---@diagnostic disable-next-line: assign-type-mismatch
                     keyVal.val = tonumber(keyVal.val) or keyVal.val
-                    if(keyVal.val == nil) then
+                    if (keyVal.val == nil) then
                         printError("Got nil for value (2)")
                     else
                         -- print('key value (2) was '..tostring(keyVal.val))
                     end
                     insert(keyVal)
+                end
+                if isGroup and parc then
+                    table.insert(isGroup, group)
+                    group = {}
                 end
             elseif part == '=' then
                 if keyVal then
