@@ -636,12 +636,13 @@ local function parseWhere(args, sI)
     local nextNot = false
     local nextCol = nil ---@type nil|string
     local nextCheck = nil ---@type nil|fun(self: table, value: any): boolean
+    local nextCheckOp = nil ---@type string?
     local nextOp = nil ---@type nil|"AND"|"OR"
     if not args[sI] then
         return condition
     end
     for i = sI, #args do
-        if type(args[i]) == "table" then
+        if type(args[i]) == "table" and args[i].key then
             if(args[i].val == nil) then
                 printError('got nil value for column '..args[i].key)
             end
@@ -660,6 +661,7 @@ local function parseWhere(args, sI)
 
             nextCol = nil
             nextCheck = nil
+            nextCheckOp = nil
             nextOp = nil
             nextNot = false
         else
@@ -667,50 +669,69 @@ local function parseWhere(args, sI)
                 nextNot = true
                 nextCol = nil
                 nextCheck = nil
+                nextCheckOp = nil
             elseif args[i] == "AND" or args[i] == "OR" then
                 nextOp = args[i]
                 nextCol = nil
                 nextCheck = nil
                 nextNot = false
+                nextCheckOp = nil
             elseif args[i] == "=" then
                 nextCheck = function(self, value)
                     return value == self.val
                 end
+                nextCheckOp = args[i]
             elseif args[i] == "<" then
                 nextCheck = function(self, value)
                     return value < self.val
                 end
+                nextCheckOp = args[i]
             elseif args[i] == ">" then
                 nextCheck = function(self, value)
                     return value > self.val
                 end
+                nextCheckOp = args[i]
             elseif args[i] == "<=" then
                 nextCheck = function(self, value)
                     return value <= self.val
                 end
+                nextCheckOp = args[i]
             elseif args[i] == ">=" then
                 nextCheck = function(self, value)
                     return value >= self.val
                 end
+                nextCheckOp = args[i]
             elseif args[i] == "!=" then
                 nextCheck = function(self, value)
                     return value ~= self.val
                 end
+                nextCheckOp = args[i]
             elseif args[i] == "BETWEEN" then
                 nextCheck = function(self, value)
                     return self.val[1] <= value and value <= self.val[2]
                 end
+                nextCheckOp = args[i]
             elseif args[i] == "IN" then
                 nextCheck = function(self, value)
                     for _, val in pairs(self.val) do
-                        if value ~= val then
+                        if value == val then
                             return true
                         end
                     end
                     return false
                 end
+                nextCheckOp = args[i]
             else
                 if (nextCheck) then
+                    if nextCheckOp == "IN" then
+                        if type(args[i]) ~= 'table' then
+                            args[i] = { args[i] }
+                        end
+                    elseif nextCheckOp == "BETWEEN" then
+                        if type(args[i]) ~= 'table' then
+                            error("Invalid BETWEEN where: two values expected")
+                        end
+                    end
                     local o = { ---@type SQLWhereCondition
                         col = nextCol --[[@as string]],
                         val = args[i],
@@ -718,11 +739,12 @@ local function parseWhere(args, sI)
                         prevOperator = nextOp,
                         check = nextCheck
                     }
-                    condition[cI] = o
+                    condition.conditions[cI] = o
                     cI = cI + 1
 
                     nextCol = nil
                     nextCheck = nil
+                    nextCheckOp = nil
                     nextOp = nil
                     nextNot = false
                 else
