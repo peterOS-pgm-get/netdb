@@ -59,7 +59,7 @@ local DBUser, DefaultDBUser = dofile('DBUser.lua') ---@type DBUser, DBUser
 local cfgPath = '/home/.appdata/netdb/netdb.cfg'
 
 local log = pos.Logger('netdb.log', false, true)
-log:setLevel(5)
+log:setLevel(4)
 
 local function debugPrintArgs(args)
     for i,a in pairs(args) do
@@ -122,6 +122,9 @@ function netdb.setup()
             cfgF.close()
         end
         netdb.config = cfg
+        if(netdb.config.logLevel) then
+            log:setLevel(netdb.config.logLevel)
+        end
         log:info('Loaded configuration')
     else
         log:warn('Config could not be found, creating one')
